@@ -7,32 +7,29 @@ app = Flask(__name__)
 
 @app.route("/")
 def index():
-    return (
-        "Try /hello/Chris for parameterized Flask route.\n"
-    )
-
-
-@app.route("/hello/<name>", methods=['GET'])
-def hello(name: str):
-    return f"hello {name}"
+    return ("Make a POST call to /audio_processor, form-data with file and word")
 
 
 @app.route("/audio_processor", methods=['POST'])
 def audio_processor():
+    if request.headers['Authorization'] != 'Bearer 2A7FRC9AScGpt2a7BU8IOtKmuLzYFj0DtMRbS354P7V565hFJ7LmGq34nel2':
+        return 'Unauthorized'
 
-    if 'file' in request.files:
-        print('files')
-        print(request.files)
-    else:
+    if 'file' not in request.files:
         return 'file required'
 
-    if 'word' in request.form:
-        print('form')
-        print(request.form)
-    else:
-        return 'word required'
 
+    if not request.files['file'].filename.lower().endswith('.mp3'):
+        return 'file not supported'
+
+    if 'word' not in request.form:
+        return 'word required'
+        
     return f"hello Juan"
+
+
+def process_audio_file():
+    return 0
 
 if __name__ == "__main__":
     app.run()
