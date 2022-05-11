@@ -4,3 +4,9 @@
 
 azure-functions
 Flask
+werkzeug
+pydub
+python-ffmpeg
+ffmpeg-python
+vosk
+SpeechRecognition
