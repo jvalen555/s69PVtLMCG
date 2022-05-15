@@ -1,16 +1,16 @@
-from traceback import print_tb
-from flask import Flask
-from flask import request
-from pydub import AudioSegment
 import os
-from werkzeug.utils import secure_filename
 import wave
-from vosk import Model, KaldiRecognizer, SetLogLevel
 import time
-import json 
+import json
+import azure.functions as func
+
+from flask import Flask, request
+from pydub import AudioSegment
+from werkzeug.utils import secure_filename
+from vosk import Model, KaldiRecognizer, SetLogLevel
 
 app = Flask(__name__)
-
+SetLogLevel(-1)
 UPLOAD_FOLDER = 'tmp/'
 
 
@@ -21,79 +21,58 @@ def index():
 
 @app.route("/audio_processor", methods=['POST'])
 def audio_processor():
-    if request.headers['Authorization'] != 'Bearer 2A7FRC9AScGpt2a7BU8IOtKmuLzYFj0DtMRbS354P7V565hFJ7LmGq34nel2':
-        return 'Unauthorized'
+    try:
+        if request.headers['Authorization'] != 'Bearer 2A7FRC9AScGpt2a7BU8IOtKmuLzYFj0DtMRbS354P7V565hFJ7LmGq34nel2':
+            return func.HttpResponse(body='Unauthorized', status_code=401)
 
-    if 'file' not in request.files:
-        return 'file required'
+        if 'file' not in request.files:
+            return 'File required', 400
 
-    if not request.files['file'].filename.lower().endswith('.mp3'):
-        return 'file not supported'
+        if not request.files['file'].filename.lower().endswith('.mp3'):
+            return 'File not supported', 400
 
-    if 'word' not in request.form:
-        return 'word required'
+        if 'word' not in request.form:
+            return 'Word required', 400
 
-    process_audio_file()
+        return process_audio_file(request.form['word'], request.files['file'])
+    except:
+        return 'an error ocurred', 400
 
-    return f"hello Juan"
 
-
-def process_audio_file(word, file):
-    #audio_file = request.files['file']
-    #audio_file_path = save_audio_file(audio_file)
-    #print('file saved {}'.format(audio_file_path))
-    #wav_file_path = mp3_to_wav(audio_file_path)
-    processed_audio = process_wav_file_2('tmp/1652278101.wav')
-    return processed_audio
+def process_audio_file(word: str, file):
+    audio_file = save_audio_file(file)
+    wav_file = mp3_to_wav(audio_file)
+    processed_audio = process_wav_file(wav_file)
+    processed_audio['words'] = filter_words(word, processed_audio['words'])
+    delete_file(audio_file)
+    delete_file(wav_file)
+    return processed_audio, 200
 
 
 def save_audio_file(file):
-    #filename = secure_filename(file.filename)
-    filename = f'{str(int(time.time()))}.mp3'
+    filename = f'{secure_filename(file.filename)}_{str(int(time.time()))}.mp3'
     file.save(os.path.join(UPLOAD_FOLDER, filename))
     return os.path.join(UPLOAD_FOLDER, filename)
 
 
-def mp3_to_wav(source, skip=0, excerpt=False):
+def mp3_to_wav(source, skip=0):
     sound = AudioSegment.from_mp3(source)  # load source
-
     sound = sound.set_channels(1)  # mono
     sound = sound.set_frame_rate(16000)  # 16000Hz
 
-    if excerpt:
-        # 30 seconds - Does not work anymore when using skip
-        excrept = sound[skip*1000:skip*1000+30000]
-        output_path = os.path.splitext(source)[0]+"_excerpt.wav"
-        excrept.export(output_path, format="wav")
-    else:
-        audio = sound[skip*1000:]
-        output_path = os.path.splitext(source)[0]+".wav"
-        audio.export(output_path, format="wav")
+    audio = sound[skip*1000:]
+    output_path = os.path.splitext(source)[0]+".wav"
+    audio.export(output_path, format="wav")
 
     return output_path
 
 
 def process_wav_file(wav_file):
-    # open audio file
-    wf = wave.open(wav_file, "rb")
-
-    # Initialize model
-    model = Model(
-        "models/vosk-model-small-en-us-0.15")
+    wf = wave.open(wav_file, "rb")    
+    model = Model("models/vosk-model-small-en-us-0.15") # Initialize model
     rec = KaldiRecognizer(model, wf.getframerate())
-    return rec
-
-
-def process_wav_file_2(wav_file):
-    wf = wave.open(wav_file, "rb")
-
-    # Initialize model
-    model = Model(
-        "models/vosk-model-small-en-us-0.15")
-    rec = KaldiRecognizer(model, wf.getframerate())
-
-    # To store our results
-    transcription = []
+    
+    transcription = [] # To store results
     result = []
 
     rec.SetWords(True)
@@ -102,24 +81,39 @@ def process_wav_file_2(wav_file):
         data = wf.readframes(4000)
         if len(data) == 0:
             break
-        if rec.AcceptWaveform(data):
-            # Convert json output to dict
-            result_dict = json.loads(rec.Result())
-            result.append(result_dict['result'])
-            # Extract text values and append them to transcription list
-            transcription.append(result_dict.get("text", ""))
-
-    # Get final bits of audio and flush the pipeline
-    final_result = json.loads(rec.FinalResult())
+        if rec.AcceptWaveform(data):            
+            result_dict = json.loads(rec.Result()) # Convert json output to dict
+            if 'result' in result_dict:
+                result = result + result_dict['result']            
+            transcription.append(result_dict.get("text", "")) # Extract text values and append them to transcription list
+    
+    final_result = json.loads(rec.FinalResult()) # Get final bits of audio and flush the pipeline
+    if 'result' in final_result:
+        result = result + final_result['result']
     transcription.append(final_result.get("text", ""))
+    
+    transcription_text = ' '.join(transcription) # merge or join all list elements to one big string
 
-    # merge or join all list elements to one big string
-    transcription_text = ' '.join(transcription)
-    print(transcription_text)
-    print(result)
+    frames = wf.getnframes()
+    rate = wf.getframerate()
+    duration = frames / float(rate)
+
     return {
-
+        'number_of_words': len(result),
+        'duration': duration,
+        'avg_conf': sum(d['conf'] for d in result) / len(result),
+        'transcription_text': transcription_text,
+        'words': result
     }
+
+
+def filter_words(word: str, result):
+    return [w for w in result if w['word'] == word.lower()]
+
+
+def delete_file(file):
+    os.remove(file)
+
 
 if __name__ == "__main__":
     app.run()
