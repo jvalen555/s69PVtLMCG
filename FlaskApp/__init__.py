@@ -4,6 +4,7 @@ import time
 import json
 import azure.functions as func
 import pymongo
+import tempfile
 
 from flask import Flask, request
 from pydub import AudioSegment
@@ -14,10 +15,9 @@ from datetime import datetime
 
 now = datetime.now()
 current_time = now.strftime("%H:%M:%S")
-
+UPLOAD_FOLDER = tempfile.gettempdir()
 app = Flask(__name__)
 SetLogLevel(-1)
-UPLOAD_FOLDER = 'tmp/'
 
 client = pymongo.MongoClient(
     "mongodb+srv://s69PVtLMCG:7xkbQYDhfPIWPLsc@cluster0.vdjgf.mongodb.net/myFirstDatabase?retryWrites=true&w=majority", server_api=ServerApi('1'))
@@ -95,13 +95,7 @@ def insert_log(log):
     return x.inserted_id
 
 
-def query_log(query):
-    myquery = {"address": "Park Lane 38"}
-    mydoc = mycol.find(query)
-    return mydoc
-
-
-def get_logs(filter = {}):
+def get_logs(filter={}):
     print(filter)
     print(type(filter))
     logs = []
@@ -138,9 +132,9 @@ def save_audio_file(file):
 
 
 def mp3_to_wav(source, skip=0):
-    sound = AudioSegment.from_mp3(source)  # load source
-    sound = sound.set_channels(1)  # mono
-    sound = sound.set_frame_rate(16000)  # 16000Hz
+    sound = AudioSegment.from_mp3(source)
+    sound = sound.set_channels(1)
+    sound = sound.set_frame_rate(16000)
 
     audio = sound[skip*1000:]
     output_path = os.path.splitext(source)[0]+".wav"
@@ -151,10 +145,10 @@ def mp3_to_wav(source, skip=0):
 
 def process_wav_file(wav_file):
     wf = wave.open(wav_file, "rb")
-    model = Model("models/vosk-model-small-en-us-0.15")  # Initialize model
+    model = Model("models/vosk-model-small-en-us-0.15")
     rec = KaldiRecognizer(model, wf.getframerate())
 
-    transcription = []  # To store results
+    transcription = []
     result = []
 
     rec.SetWords(True)
@@ -164,20 +158,16 @@ def process_wav_file(wav_file):
         if len(data) == 0:
             break
         if rec.AcceptWaveform(data):
-            # Convert json output to dict
             result_dict = json.loads(rec.Result())
             if 'result' in result_dict:
                 result = result + result_dict['result']
-            # Extract text values and append them to transcription list
             transcription.append(result_dict.get("text", ""))
 
-    # Get final bits of audio and flush the pipeline
     final_result = json.loads(rec.FinalResult())
     if 'result' in final_result:
         result = result + final_result['result']
     transcription.append(final_result.get("text", ""))
 
-    # merge or join all list elements to one big string
     transcription_text = ' '.join(transcription)
 
     frames = wf.getnframes()
